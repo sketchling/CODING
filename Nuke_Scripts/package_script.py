@@ -16,8 +16,22 @@ GEO_EXTS = {
     '.ply', '.stl',
 }
 
+SUBDIRS = ['IMAGES', 'GEO', 'CAMERAS', 'RENDERS', 'SOURCE_WORKING_FILES']
 
-def _get_default_category(ext, knob_name):
+CAT_TO_DIRNAME = {
+    'image': 'IMAGES',
+    'geo': 'GEO',
+    'camera': 'CAMERAS',
+    'render': 'RENDERS',
+}
+
+
+def _get_category(node, ext, knob_name):
+    node_class = node.Class()
+    if 'Camera' in node_class:
+        return 'camera'
+    if 'Write' in node_class:
+        return 'render'
     if ext in IMAGE_EXTS:
         return 'image'
     if ext in GEO_EXTS:
@@ -49,12 +63,12 @@ def _collect_file_references():
                 continue
             is_seq = '%' in val or '#' in val or '@' in val
             ext = os.path.splitext(val)[1].lower()
-            cat = _get_default_category(ext, knob.name())
+            cat = _get_category(node, ext, knob.name())
             refs.append((node, knob, val, cat, is_seq))
     return refs
 
 
-def _copy_single_file(src_path, dest_dir, cat, copied):
+def _copy_single_file(src_path, dest_dir, dirname, copied):
     if src_path in copied:
         return copied[src_path]
     if not os.path.isfile(src_path):
@@ -67,12 +81,12 @@ def _copy_single_file(src_path, dest_dir, cat, copied):
     except (shutil.Error, IOError, OSError) as e:
         print(f"Warning: could not copy {src_path} -> {dest}: {e}")
         return None
-    rel_path = os.path.join(cat, basename)
+    rel_path = os.path.join(dirname, basename)
     copied[src_path] = rel_path
     return rel_path
 
 
-def _copy_sequence(node, knob, orig_val, cat, geo_dir, img_dir, copied):
+def _copy_sequence(node, knob, orig_val, dest_dir, dirname, copied):
     try:
         resolved = nuke.filename(node, knob.name())
     except Exception:
@@ -81,25 +95,24 @@ def _copy_sequence(node, knob, orig_val, cat, geo_dir, img_dir, copied):
         print(f"Warning: could not resolve sequence path: {orig_val}")
         return None
 
-    dirname = os.path.dirname(resolved)
+    dirpath = os.path.dirname(resolved)
     pattern_basename = os.path.basename(orig_val)
     glob_pattern = _make_glob_pattern(pattern_basename)
-    full_glob = os.path.join(dirname, glob_pattern) if dirname else glob_pattern
+    full_glob = os.path.join(dirpath, glob_pattern) if dirpath else glob_pattern
     matches = sorted(glob.glob(full_glob))
     if not matches:
         print(f"Warning: no files found matching {full_glob}")
         return None
-    target_dir = geo_dir if cat == 'geo' else img_dir
     for src in matches:
         if src in copied:
             continue
-        dst = os.path.join(target_dir, os.path.basename(src))
+        dst = os.path.join(dest_dir, os.path.basename(src))
         try:
             shutil.copy2(src, dst)
-            copied[src] = os.path.join(cat, os.path.basename(src))
+            copied[src] = os.path.join(dirname, os.path.basename(src))
         except (shutil.Error, IOError, OSError) as e:
             print(f"Warning: could not copy {src} -> {dst}: {e}")
-    return os.path.join(cat, pattern_basename)
+    return os.path.join(dirname, pattern_basename)
 
 
 def _pick_directory():
@@ -131,6 +144,29 @@ def _pick_directory():
     return result.strip() if result else None
 
 
+def _resolve_package_root(target_dir, script_name):
+    target_basename = os.path.basename(target_dir)
+    is_publish = 'PUBLISH' in target_basename.upper()
+
+    if is_publish:
+        parent_directory = os.path.basename(os.path.dirname(target_dir))
+        if not parent_directory:
+            parent_directory = script_name
+        version = 1
+        while True:
+            version_str = f"v{version:03d}"
+            pkg_root = os.path.join(
+                target_dir, f"{parent_directory}_pkg_{version_str}"
+            )
+            if not os.path.exists(pkg_root):
+                break
+            version += 1
+    else:
+        pkg_root = os.path.join(target_dir, f"{script_name}_PKG")
+
+    return pkg_root
+
+
 def package_script():
     print("[package_script] Packaging started...")
     original_path = nuke.root().name()
@@ -144,11 +180,13 @@ def package_script():
     if not target_dir:
         return
 
-    pkg_root = os.path.join(target_dir, f"{script_name}_PKG")
-    geo_dir = os.path.join(pkg_root, "geo")
-    img_dir = os.path.join(pkg_root, "image")
-    for d in (pkg_root, geo_dir, img_dir):
-        os.makedirs(d, exist_ok=True)
+    pkg_root = _resolve_package_root(target_dir, script_name)
+
+    cat_to_dirpath = {}
+    for cat, dirname in CAT_TO_DIRNAME.items():
+        cat_to_dirpath[cat] = os.path.join(pkg_root, dirname)
+    for dirname in SUBDIRS:
+        os.makedirs(os.path.join(pkg_root, dirname), exist_ok=True)
 
     refs = _collect_file_references()
     if not refs:
@@ -159,19 +197,26 @@ def package_script():
     to_update = []
 
     for node, knob, orig_val, cat, is_seq in refs:
+        dest_dir = cat_to_dirpath[cat]
+        dirname = CAT_TO_DIRNAME[cat]
+
         if is_seq:
             new_val = _copy_sequence(
-                node, knob, orig_val, cat, geo_dir, img_dir, copied
+                node, knob, orig_val, dest_dir, dirname, copied
             )
         else:
             try:
                 resolved = nuke.filename(node, knob.name())
             except Exception:
                 resolved = None
-            if not resolved or not os.path.isfile(resolved):
-                continue
-            target_dir = geo_dir if cat == 'geo' else img_dir
-            new_val = _copy_single_file(resolved, target_dir, cat, copied)
+            if resolved and os.path.isfile(resolved):
+                new_val = _copy_single_file(resolved, dest_dir, dirname, copied)
+            else:
+                new_val = None
+
+        if new_val is None and cat == 'render':
+            basename = os.path.basename(orig_val)
+            new_val = os.path.join(dirname, basename)
 
         if new_val is not None:
             to_update.append((knob, orig_val, new_val))
