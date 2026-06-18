@@ -40,7 +40,7 @@ def _make_glob_pattern(path_pattern):
 
 def _collect_file_references():
     refs = []
-    for node in nuke.allNodes('all'):
+    for node in nuke.allNodes():
         for knob in node.allKnobs():
             if not isinstance(knob, nuke.File_Knob):
                 continue
@@ -55,25 +55,35 @@ def _collect_file_references():
 
 
 def _copy_single_file(src_path, dest_dir, cat, copied):
+    if src_path in copied:
+        return copied[src_path]
     if not os.path.isfile(src_path):
         return None
     basename = os.path.basename(src_path)
     dest = os.path.join(dest_dir, basename)
-    if src_path not in copied:
-        try:
-            os.makedirs(dest_dir, exist_ok=True)
-            shutil.copy2(src_path, dest)
-            copied[src_path] = os.path.join(cat, basename)
-        except (shutil.Error, IOError, OSError) as e:
-            print(f"Warning: could not copy {src_path} -> {dest}: {e}")
-            return None
-    return os.path.join(cat, basename)
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        shutil.copy2(src_path, dest)
+    except (shutil.Error, IOError, OSError) as e:
+        print(f"Warning: could not copy {src_path} -> {dest}: {e}")
+        return None
+    rel_path = os.path.join(cat, basename)
+    copied[src_path] = rel_path
+    return rel_path
 
 
-def _copy_sequence(orig_val, cat, geo_dir, img_dir, copied):
-    dirname = os.path.dirname(orig_val)
-    basename = os.path.basename(orig_val)
-    glob_pattern = _make_glob_pattern(basename)
+def _copy_sequence(node, knob, orig_val, cat, geo_dir, img_dir, copied):
+    try:
+        resolved = nuke.filename(node, knob.name())
+    except Exception:
+        resolved = None
+    if not resolved:
+        print(f"Warning: could not resolve sequence path: {orig_val}")
+        return None
+
+    dirname = os.path.dirname(resolved)
+    pattern_basename = os.path.basename(orig_val)
+    glob_pattern = _make_glob_pattern(pattern_basename)
     full_glob = os.path.join(dirname, glob_pattern) if dirname else glob_pattern
     matches = sorted(glob.glob(full_glob))
     if not matches:
@@ -81,14 +91,15 @@ def _copy_sequence(orig_val, cat, geo_dir, img_dir, copied):
         return None
     target_dir = geo_dir if cat == 'geo' else img_dir
     for src in matches:
+        if src in copied:
+            continue
         dst = os.path.join(target_dir, os.path.basename(src))
-        if src not in copied:
-            try:
-                shutil.copy2(src, dst)
-                copied[src] = os.path.join(cat, os.path.basename(src))
-            except (shutil.Error, IOError, OSError) as e:
-                print(f"Warning: could not copy {src} -> {dst}: {e}")
-    return os.path.join(cat, basename)
+        try:
+            shutil.copy2(src, dst)
+            copied[src] = os.path.join(cat, os.path.basename(src))
+        except (shutil.Error, IOError, OSError) as e:
+            print(f"Warning: could not copy {src} -> {dst}: {e}")
+    return os.path.join(cat, pattern_basename)
 
 
 def _pick_directory():
@@ -150,7 +161,7 @@ def package_script():
     for node, knob, orig_val, cat, is_seq in refs:
         if is_seq:
             new_val = _copy_sequence(
-                orig_val, cat, geo_dir, img_dir, copied
+                node, knob, orig_val, cat, geo_dir, img_dir, copied
             )
         else:
             try:
@@ -169,27 +180,31 @@ def package_script():
         nuke.message("No files could be copied.")
         return
 
-    for knob, orig, new in to_update:
-        knob.setValue(new)
-
     new_script_path = os.path.join(pkg_root, f"{script_name}.nk")
+    used_export = False
 
     try:
-        nuke.scriptExport(new_script_path)
-    except AttributeError:
-        nuke.scriptSaveAs(new_script_path, overwrite=-1)
+        for knob, orig, new in to_update:
+            knob.setValue(new)
+
+        if hasattr(nuke, 'scriptExport'):
+            try:
+                nuke.scriptExport(new_script_path)
+                used_export = True
+            except Exception as e:
+                print(f"Warning: scriptExport failed: {e}")
+
+        if not used_export:
+            nuke.scriptSaveAs(new_script_path, overwrite=-1)
+    finally:
         for knob, orig, new in to_update:
             knob.setValue(orig)
-        nuke.scriptSaveAs(original_path, overwrite=-1)
-        nuke.message(
-            f"Package created at:\n{pkg_root}\n\n"
-            f"Copied {len(to_update)} file reference(s).\n"
-            f"The scene has been restored to its original state."
-        )
-        return
 
-    for knob, orig, new in to_update:
-        knob.setValue(orig)
+        if not used_export:
+            try:
+                nuke.scriptSaveAs(original_path, overwrite=-1)
+            except Exception as e:
+                print(f"Warning: could not restore original script path: {e}")
 
     nuke.message(
         f"Package created at:\n{pkg_root}\n\n"
