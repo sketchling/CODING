@@ -91,7 +91,37 @@ def _copy_sequence(orig_val, cat, geo_dir, img_dir, copied):
     return os.path.join(cat, basename)
 
 
+def _pick_directory():
+    for pkg in ('PySide6', 'PySide2'):
+        try:
+            mod = __import__(pkg, fromlist=['QtWidgets'])
+            result = mod.QtWidgets.QFileDialog.getExistingDirectory(
+                None, "Select package destination"
+            )
+            if result:
+                return result
+        except Exception:
+            continue
+
+    try:
+        import tkinter
+        from tkinter import filedialog
+        tk_root = tkinter.Tk()
+        tk_root.withdraw()
+        tk_root.lift()
+        result = filedialog.askdirectory(title="Select package destination")
+        tk_root.destroy()
+        if result:
+            return result
+    except Exception:
+        pass
+
+    result = nuke.getInput("Enter target directory path for package:")
+    return result.strip() if result else None
+
+
 def package_script():
+    print("[package_script] Packaging started...")
     original_path = nuke.root().name()
     if original_path == 'Root':
         nuke.message("Please save your script before packaging.")
@@ -99,15 +129,7 @@ def package_script():
 
     script_name = os.path.splitext(os.path.basename(original_path))[0]
 
-    try:
-        from PySide2.QtWidgets import QFileDialog
-    except ImportError:
-        nuke.message("PySide2 is required for the directory picker.")
-        return
-
-    target_dir = QFileDialog.getExistingDirectory(
-        None, "Select package destination"
-    )
+    target_dir = _pick_directory()
     if not target_dir:
         return
 
@@ -174,3 +196,7 @@ def package_script():
         f"Copied {len(to_update)} file reference(s).\n"
         f"The scene has been restored to its original state."
     )
+
+
+if __name__ == "__main__":
+    package_script()
