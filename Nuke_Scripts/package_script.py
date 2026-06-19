@@ -120,7 +120,7 @@ def _collect_file_references():
     return refs
 
 
-def _copy_single_file(src_path, dest_dir, dirname, copied):
+def _copy_single_file(src_path, dest_dir, dirname, pkg_root, copied):
     if src_path in copied:
         return copied[src_path]
     basename = os.path.basename(src_path)
@@ -131,12 +131,12 @@ def _copy_single_file(src_path, dest_dir, dirname, copied):
     except (shutil.Error, IOError, OSError) as e:
         print(f"Warning: could not copy {src_path} -> {dest}: {e}")
         return None
-    rel_path = os.path.join(dirname, basename)
-    copied[src_path] = rel_path
-    return rel_path
+    abs_path = os.path.join(dest_dir, basename)
+    copied[src_path] = abs_path
+    return abs_path
 
 
-def _copy_sequence(node, knob, orig_val, dest_dir, dirname, copied):
+def _copy_sequence(node, knob, orig_val, dest_dir, dirname, pkg_root, copied):
     resolved = _resolve_filename(node, knob)
     if not resolved:
         print(f"Warning: could not resolve sequence path: {orig_val}")
@@ -155,10 +155,10 @@ def _copy_sequence(node, knob, orig_val, dest_dir, dirname, copied):
         dst = os.path.join(dest_dir, os.path.basename(src))
         try:
             shutil.copy2(src, dst)
-            copied[src] = os.path.join(dirname, os.path.basename(src))
+            copied[src] = dst
         except (shutil.Error, IOError, OSError) as e:
             print(f"Warning: could not copy {src} -> {dst}: {e}")
-    return os.path.join(dirname, pattern_basename)
+    return os.path.join(dest_dir, pattern_basename)
 
 
 def _pick_directory():
@@ -202,7 +202,7 @@ def _resolve_package_root(target_dir, script_name):
         while True:
             version_str = f"v{version:03d}"
             pkg_root = os.path.join(
-                target_dir, f"{parent_directory}_pkg_{version_str}"
+                target_dir, f"{parent_directory}_publish_{version_str}"
             )
             if not os.path.exists(pkg_root):
                 break
@@ -248,19 +248,19 @@ def package_script():
 
         if is_seq:
             new_val = _copy_sequence(
-                node, knob, orig_val, dest_dir, dirname, copied
+                node, knob, orig_val, dest_dir, dirname, pkg_root, copied
             )
         else:
             resolved = _resolve_filename(node, knob)
             if resolved:
-                new_val = _copy_single_file(resolved, dest_dir, dirname, copied)
+                new_val = _copy_single_file(resolved, dest_dir, dirname, pkg_root, copied)
             else:
                 print(f"Warning: file not found: {orig_val} (node: {node.name()})")
                 new_val = None
 
         if new_val is None and cat == 'render':
             basename = os.path.basename(orig_val)
-            new_val = os.path.join(dirname, basename)
+            new_val = os.path.join(dest_dir, basename)
 
         if new_val is not None:
             to_update.append((knob, orig_val, new_val))
