@@ -222,6 +222,16 @@ def package_script():
 
     script_name = os.path.splitext(os.path.basename(original_path))[0]
 
+    confirm = nuke.ask("Save current script and run package process?")
+    if not confirm:
+        return
+
+    try:
+        nuke.scriptSave()
+    except Exception as e:
+        nuke.message(f"Could not save script: {e}")
+        return
+
     target_dir = _pick_directory()
     if not target_dir:
         return
