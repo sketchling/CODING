@@ -306,9 +306,9 @@ def package_script():
 
         if not used_export:
             try:
-                nuke.scriptSaveAs(original_path, overwrite=-1)
+                nuke.scriptOpen(original_path)
             except Exception as e:
-                print(f"Warning: could not restore original script path: {e}")
+                print(f"Warning: could not reopen original script: {e}")
 
     nuke.message(
         f"Package created at:\n{pkg_root}\n\n"
