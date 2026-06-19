@@ -131,7 +131,7 @@ def _copy_single_file(src_path, dest_dir, dirname, pkg_root, copied):
     except (shutil.Error, IOError, OSError) as e:
         print(f"Warning: could not copy {src_path} -> {dest}: {e}")
         return None
-    abs_path = os.path.join(dest_dir, basename)
+    abs_path = _normalize_path(os.path.join(dest_dir, basename))
     copied[src_path] = abs_path
     return abs_path
 
@@ -155,10 +155,10 @@ def _copy_sequence(node, knob, orig_val, dest_dir, dirname, pkg_root, copied):
         dst = os.path.join(dest_dir, os.path.basename(src))
         try:
             shutil.copy2(src, dst)
-            copied[src] = dst
+            copied[src] = _normalize_path(dst)
         except (shutil.Error, IOError, OSError) as e:
             print(f"Warning: could not copy {src} -> {dst}: {e}")
-    return os.path.join(dest_dir, pattern_basename)
+    return _normalize_path(os.path.join(dest_dir, pattern_basename))
 
 
 def _pick_directory():
@@ -210,7 +210,7 @@ def _resolve_package_root(target_dir, script_name):
     else:
         pkg_root = os.path.join(target_dir, f"{script_name}_PKG")
 
-    return pkg_root
+    return _normalize_path(pkg_root)
 
 
 def package_script():
@@ -230,7 +230,7 @@ def package_script():
 
     cat_to_dirpath = {}
     for cat, dirname in CAT_TO_DIRNAME.items():
-        cat_to_dirpath[cat] = os.path.join(pkg_root, dirname)
+        cat_to_dirpath[cat] = _normalize_path(os.path.join(pkg_root, dirname))
     for dirname in SUBDIRS:
         os.makedirs(os.path.join(pkg_root, dirname), exist_ok=True)
 
@@ -260,7 +260,7 @@ def package_script():
 
         if new_val is None and cat == 'render':
             basename = os.path.basename(orig_val)
-            new_val = os.path.join(dest_dir, basename)
+            new_val = _normalize_path(os.path.join(dest_dir, basename))
 
         if new_val is not None:
             to_update.append((knob, orig_val, new_val))
@@ -274,7 +274,7 @@ def package_script():
         )
         return
 
-    new_script_path = os.path.join(pkg_root, f"{script_name}.nk")
+    new_script_path = _normalize_path(os.path.join(pkg_root, f"{script_name}.nk"))
     used_export = False
 
     try:
