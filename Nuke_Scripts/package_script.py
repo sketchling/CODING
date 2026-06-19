@@ -26,6 +26,58 @@ CAT_TO_DIRNAME = {
 }
 
 
+def _normalize_path(path):
+    if not path:
+        return path
+    path = path.replace('\\', '/')
+    return path
+
+
+def _file_exists(path):
+    if not path:
+        return False
+    if os.path.isfile(path):
+        return True
+    try:
+        return nuke.tcl('file exists', path) == '1'
+    except Exception:
+        return False
+
+
+def _resolve_filename(node, knob):
+    for attempt in range(2):
+        try:
+            resolved = nuke.filename(node, knob.name())
+        except Exception:
+            resolved = None
+        if resolved:
+            resolved = _normalize_path(resolved)
+            if _file_exists(resolved):
+                return resolved
+        if attempt == 0:
+            raw = knob.getValue()
+            if raw:
+                raw = _normalize_path(raw)
+                if _file_exists(raw):
+                    return raw
+    return None
+
+
+def _glob_sequence(resolved_dir, glob_pattern):
+    full_glob = os.path.join(resolved_dir, glob_pattern) if resolved_dir else glob_pattern
+    full_glob = _normalize_path(full_glob)
+    matches = sorted(glob.glob(full_glob))
+    if matches:
+        return matches
+    try:
+        tcl_glob = nuke.tcl('glob', full_glob)
+        if tcl_glob:
+            return sorted(tcl_glob.split())
+    except Exception:
+        pass
+    return []
+
+
 def _get_category(node, ext, knob_name):
     node_class = node.Class()
     if 'Camera' in node_class:
@@ -71,8 +123,6 @@ def _collect_file_references():
 def _copy_single_file(src_path, dest_dir, dirname, copied):
     if src_path in copied:
         return copied[src_path]
-    if not os.path.isfile(src_path):
-        return None
     basename = os.path.basename(src_path)
     dest = os.path.join(dest_dir, basename)
     try:
@@ -87,10 +137,7 @@ def _copy_single_file(src_path, dest_dir, dirname, copied):
 
 
 def _copy_sequence(node, knob, orig_val, dest_dir, dirname, copied):
-    try:
-        resolved = nuke.filename(node, knob.name())
-    except Exception:
-        resolved = None
+    resolved = _resolve_filename(node, knob)
     if not resolved:
         print(f"Warning: could not resolve sequence path: {orig_val}")
         return None
@@ -98,10 +145,9 @@ def _copy_sequence(node, knob, orig_val, dest_dir, dirname, copied):
     dirpath = os.path.dirname(resolved)
     pattern_basename = os.path.basename(orig_val)
     glob_pattern = _make_glob_pattern(pattern_basename)
-    full_glob = os.path.join(dirpath, glob_pattern) if dirpath else glob_pattern
-    matches = sorted(glob.glob(full_glob))
+    matches = _glob_sequence(dirpath, glob_pattern)
     if not matches:
-        print(f"Warning: no files found matching {full_glob}")
+        print(f"Warning: no files found matching {orig_val}")
         return None
     for src in matches:
         if src in copied:
@@ -205,13 +251,11 @@ def package_script():
                 node, knob, orig_val, dest_dir, dirname, copied
             )
         else:
-            try:
-                resolved = nuke.filename(node, knob.name())
-            except Exception:
-                resolved = None
-            if resolved and os.path.isfile(resolved):
+            resolved = _resolve_filename(node, knob)
+            if resolved:
                 new_val = _copy_single_file(resolved, dest_dir, dirname, copied)
             else:
+                print(f"Warning: file not found: {orig_val} (node: {node.name()})")
                 new_val = None
 
         if new_val is None and cat == 'render':
@@ -222,7 +266,12 @@ def package_script():
             to_update.append((knob, orig_val, new_val))
 
     if not to_update:
-        nuke.message("No files could be copied.")
+        nuke.message(
+            "No files could be copied.\n\n"
+            "Check the Script Editor output for warnings.\n"
+            "Common causes: network paths (//server/share), missing files, "
+            "or unresolved TCL expressions."
+        )
         return
 
     new_script_path = os.path.join(pkg_root, f"{script_name}.nk")
