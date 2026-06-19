@@ -286,7 +286,8 @@ def package_script():
         )
         return
 
-    new_script_path = _normalize_path(os.path.join(pkg_root, f"{script_name}.nk"))
+    pkg_folder_name = os.path.basename(pkg_root)
+    new_script_path = _normalize_path(os.path.join(pkg_root, f"{pkg_folder_name}.nk"))
     used_export = False
 
     try:
