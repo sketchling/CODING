@@ -263,7 +263,7 @@ def package_script():
             new_val = _normalize_path(os.path.join(dest_dir, basename))
 
         if new_val is not None:
-            to_update.append((node.name(), knob.name(), orig_val, new_val))
+            to_update.append((knob, orig_val, new_val))
 
     if not to_update:
         nuke.message(
@@ -275,33 +275,30 @@ def package_script():
         return
 
     new_script_path = _normalize_path(os.path.join(pkg_root, f"{script_name}.nk"))
-    temp_path = _normalize_path(os.path.join(pkg_root, "_temp_packaging.nk"))
+    used_export = False
 
     try:
-        nuke.scriptSaveAs(temp_path, overwrite=-1)
-    except Exception as e:
-        nuke.message(f"Could not save temp file: {e}")
-        return
+        for knob, orig, new in to_update:
+            knob.setValue(new)
 
-    try:
-        for node_name, knob_name, _, new_val in to_update:
-            node = nuke.toNode(node_name)
-            if node:
-                knob = node.knob(knob_name)
-                if knob:
-                    knob.setValue(new_val)
+        if hasattr(nuke, 'scriptExport'):
+            try:
+                nuke.scriptExport(new_script_path)
+                used_export = True
+            except Exception as e:
+                print(f"Warning: scriptExport failed: {e}")
 
-        nuke.scriptSaveAs(new_script_path, overwrite=-1)
+        if not used_export:
+            nuke.scriptSaveAs(new_script_path, overwrite=-1)
     finally:
-        try:
-            nuke.scriptOpen(original_path)
-        except Exception as e:
-            print(f"Warning: could not reopen original script: {e}")
+        for knob, orig, new in to_update:
+            knob.setValue(orig)
 
-        try:
-            os.remove(temp_path)
-        except OSError:
-            pass
+        if not used_export:
+            try:
+                nuke.scriptSaveAs(original_path, overwrite=-1)
+            except Exception as e:
+                print(f"Warning: could not restore original script path: {e}")
 
     nuke.message(
         f"Package created at:\n{pkg_root}\n\n"
