@@ -223,7 +223,9 @@ def package_script():
     script_name = os.path.splitext(os.path.basename(original_path))[0]
 
     confirm = nuke.ask("Save current script and run package process?")
-    if not confirm:
+    print(f"[package_script] confirm returned: {confirm!r}")
+    if confirm is not True:
+        print("[package_script] Aborted by user.")
         return
 
     try:
